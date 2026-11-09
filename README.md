@@ -1,107 +1,52 @@
-# Servidor MCP para Alegra API
+# Alegra MCP
 
-Este proyecto implementa un servidor compatible con el Protocolo de Contexto de Modelo (MCP) que actúa como un puente hacia la API de contabilidad de Alegra. Permite que los Modelos de Lenguaje Grandes (LLMs) interactúen de forma segura con una amplia gama de recursos de Alegra, como facturas, contactos, ítems, pagos y más.
+Servidor local del [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) para consultar y administrar recursos de la API de Alegra.
+Usa el SDK TypeScript v2 y el transporte estándar `stdio`. Solo acepta el protocolo moderno MCP `2026-07-28`; los clientes legacy son rechazados.
+La salida estándar queda reservada para el protocolo.
 
-Elaborado por Juan Sánchez.
+## Requisitos
 
-## Características
+- Node.js 20 o posterior.
+- Usuario y token de API de Alegra.
 
-  * **Integración Completa con Alegra**: Ofrece una herramienta (`AlegraAPI`) para realizar operaciones CRUD (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) en la mayoría de los *endpoints* de la API de Alegra.
-  * **Amplia Gama de Recursos**: Soporta una gran variedad de recursos, incluyendo `invoices`, `contacts`, `items`, `credit-notes`, `purchase-orders`, `bills`, `warehouses`, `bank-accounts`, `taxes`, entre muchos otros.
-  * **Operaciones Flexibles**: Permite la consulta de colecciones de recursos, la obtención de un recurso por su ID específico, la creación de nuevos recursos y la actualización parcial (`PATCH`) o completa (`PUT`) y la eliminación de los existentes.
-  * **Búsqueda y Filtrado**: Admite el uso de parámetros de consulta para filtrar y paginar resultados en las solicitudes `GET`.
-  * **Manejo de Cuerpo de Solicitud**: Utiliza el parámetro `queryParams` para enviar el cuerpo (body) de las solicitudes `POST`, `PUT` y `PATCH`.
-  * **Registro de Actividad**: Todas las solicitudes (con su código de respuesta HTTP) y errores se registran en un archivo local `alegra-mcp.log` para facilitar la depuración y el seguimiento.
-  * **Sin dependencias externas de red**: Utiliza el `fetch` nativo de Node.js 18+, sin librerías adicionales de HTTP.
+## Configuración en un cliente MCP
 
-## Aviso de Seguridad Importante
-
-**Sus credenciales de Alegra nunca salen de su máquina.**
-
-Este servidor está diseñado con la seguridad como prioridad. La autenticación con la API de Alegra se gestiona de la siguiente manera:
-
-1.  **Credenciales Locales**: El servidor lee su usuario (`ALEGRA_USER`) y token (`ALEGRA_TOKEN`) directamente desde variables de entorno en su máquina.
-2.  **Sin Almacenamiento en Disco**: Las credenciales no están codificadas en el programa ni se guardan en ninguna base de datos. Se mantienen en memoria solo durante la sesión del proceso.
-3.  **Caché en Memoria (solo en RAM)**: Los headers de autenticación se calculan una vez y se reutilizan durante la sesión activa para mayor eficiencia; se descartan al cerrar el servidor.
-4.  **Protección en Git**: El archivo `.gitignore` está configurado para excluir explícitamente cualquier archivo `.env`, evitando que sus credenciales sean enviadas accidentalmente a un repositorio de código.
-
-> **Usted puede utilizar su LLM de confianza para validar el código y confirmar que sus credenciales no son almacenadas ni transmitidas a terceros.** El archivo clave para revisar es `src/auth.ts`, donde se leen las variables de entorno para generar los headers de autorización.
-
-## Método 1: Ejecución Directa con NPX (para usuarios finales) - Fácil
-
-Si no necesita modificar el código y solo desea utilizar la herramienta con su LLM, puede configurar su cliente MCP (por ejemplo, en el `settings.json` de VS Code) para que descargue y ejecute el servidor automáticamente.
-
-Agregue la siguiente configuración a su cliente MCP:
+Configura las credenciales como variables de entorno del proceso. Por ejemplo, en VS Code:
 
 ```json
 {
-"mcpservers": {
-    "Alegra-MCP-Public": {
-        "command": "npx",
-        "args": [
-            "-y",
-            "@juancsanchez/alegra-mcp"
-        ],
-        "env": {
-            "ALEGRA_USER": "su_email@dominio.com",
-            "ALEGRA_TOKEN": "su_token_de_api_aqui"
-        }
+  "servers": {
+    "Alegra": {
+      "command": "npx",
+      "args": ["-y", "@juancsanchez/alegra-mcp"],
+      "env": {
+        "ALEGRA_USER": "su-correo@dominio.com",
+        "ALEGRA_TOKEN": "su_token_de_api"
+      }
     }
-}
+  }
 }
 ```
 
-Esta configuración le indica a su cliente que use `npx` para ejecutar la última versión del paquete, pasando sus credenciales de forma segura a través de variables de entorno, sin necesidad de clonar o instalar el proyecto manualmente.
+Consulta la documentación del cliente MCP para conocer su formato exacto de configuración. No guardes credenciales en el repositorio ni compartas el archivo de configuración.
 
-## Método 2: Instalación Local (para desarrolladores)
+## Herramientas
 
-Siga estos pasos si desea modificar o examinar el código.
+- `alegra_read`: consulta colecciones y registros. Marcada como solo lectura.
+- `alegra_write`: crea o actualiza registros con `POST`, `PUT` o `PATCH`.
+- `alegra_delete`: elimina un registro por ID y se anuncia como operación destructiva.
+- `AlegraAPI`: herramienta de propósito general para ejecutar operaciones CRUD en recursos de Alegra.
 
-### Requisitos Previos
+Los recursos admitidos incluyen facturas, contactos, ítems, notas crédito, órdenes de compra, pagos, bodegas, cuentas bancarias, impuestos y otros recursos disponibles en la API de Alegra.
 
-  * **Node.js**: Se requiere la versión **18 o superior** (utiliza `fetch` nativo).
-  * **Credenciales de Alegra**: Necesita un usuario y un token de API de su cuenta de Alegra.
+Para `GET` y `DELETE`, `queryParams` se convierte en parámetros URL. Para `POST`, `PUT` y `PATCH`, `queryParams` se envía como cuerpo JSON. Los logs se escriben en `stderr` y no incluyen cuerpos, parámetros, respuestas ni credenciales.
 
-### Instalación y Configuración
+## Desarrollo
 
-1.  **Clonar el Repositorio**
+```bash
+npm install
+npm test
+npm start
+```
 
-    ```bash
-    git clone https://github.com/juancsanchez/Alegra-MCP
-    cd alegra-mcp
-    ```
-
-2.  **Instalar Dependencias**
-
-    ```bash
-    npm install
-    ```
-
-3.  **Configurar las Credenciales**
-    Cree un archivo llamado `.env` en la raíz del proyecto.
-
-    ```bash
-    touch .env
-    ```
-
-    Añada sus credenciales de Alegra al archivo `.env`:
-
-    ```dotenv
-    # Archivo .env
-    ALEGRA_USER="su-correo@ejemplo.com"
-    ALEGRA_TOKEN="su_token_secreto_de_la_api"
-    ```
-
-### Uso
-
-1.  **Compilar el Código**
-
-    ```bash
-    npm run build
-    ```
-
-2.  **Iniciar el Servidor**
-
-    ```bash
-    npm start
-    ```
+`npm run build` compila el servidor en `build/`. Las pruebas ejercitan la construcción de URLs, autenticación, cuerpos JSON, errores HTTP y la aceptación del protocolo moderno junto con el rechazo de clientes legacy, sin conectarse a una cuenta real de Alegra.

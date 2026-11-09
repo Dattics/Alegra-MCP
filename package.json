@@ -1,8 +1,9 @@
 {
   "name": "@juancsanchez/alegra-mcp",
-  "version": "1.3.1",
+  "version": "2.0.0",
   "description": "Servidor MCP para la API de Alegra",
-  "main": "index.js",
+  "main": "build/main.js",
+  "exports": "./build/main.js",
   "type": "module",
   "bin": {
     "alegra-mcp": "build/main.js"
@@ -12,19 +13,21 @@
   ],
   "scripts": {
     "build": "tsc",
-    "start": "node build/main.js"
+    "start": "node build/main.js",
+    "test": "npm run build && node --test"
   },
   "keywords": [],
   "author": "Juan Sánchez",
   "license": "ISC",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.13.1",
-    "zod": "^3.25.67"
+    "@modelcontextprotocol/server": "^2.4.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": "^24.0.3",
     "typescript": "^5.8.3"
   }
