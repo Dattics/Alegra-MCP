@@ -1,135 +1,186 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import { getAlegraAuthHeaders } from './auth.js';
+import { McpServer } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
+import * as z from 'zod/v4';
+import { ALEGRA_ENDPOINTS, requestAlegra } from './alegra-api.js';
 import { logger } from './logger.js';
-const BASE_URL = 'https://api.alegra.com/api/v1/';
-const server = new McpServer({
-    name: "Alegra-MCP",
-    version: "1.3.1",
-    prompts: [
-        {
-            title: "Listar las 5 facturas de venta más recientes",
-            description: "Ejemplo para obtener un listado de las últimas 5 facturas emitidas.",
-            prompt: "Por favor, muéstreme las últimas 5 facturas de venta."
-        },
-        {
-            title: "Buscar un contacto por su nombre",
-            description: "Demuestra cómo usar los parámetros de consulta para buscar un cliente específico.",
-            prompt: "Encuentre el contacto con el nombre \"Cliente Ejemplo S.A.S\""
-        },
-        {
-            title: "Obtener detalles de un ítem por su ID",
-            description: "Ejemplo para recuperar un producto o servicio usando su identificador único.",
-            prompt: "Obtenga los detalles del ítem con ID 15."
-        },
-        {
-            title: "Crear un borrador de factura de venta",
-            description: "Muestra cómo estructurar una solicitud para crear una nueva factura en estado de borrador.",
-            prompt: "Cree un nuevo borrador de factura para el cliente con ID 1, con el ítem de ID 4 (cantidad 2, precio 50000)."
-        },
-        {
-            title: "Listar las cuentas bancarias",
-            description: "Ejemplo para consultar recursos que no requieren parámetros complejos.",
-            prompt: "Liste todas las cuentas bancarias registradas."
-        }
-    ]
+const endpointSchema = z.enum(ALEGRA_ENDPOINTS)
+    .describe('Recurso de Alegra, por ejemplo invoices, contacts o items.');
+const idSchema = z.string().min(1).optional()
+    .describe('Identificador del registro; omítalo para consultar o crear colecciones.');
+const queryParamsSchema = z.record(z.string(), z.unknown()).optional()
+    .describe('Parámetros de consulta para GET/DELETE o cuerpo JSON para POST/PUT/PATCH.');
+const readInputSchema = z.object({
+    endpoint: endpointSchema,
+    id: idSchema,
+    queryParams: queryParamsSchema,
 });
-logger.info("Iniciando Servidor MCP para Alegra...");
-server.tool("AlegraAPI", "Una herramienta para interactuar con la API de contabilidad de Alegra. Permite realizar operaciones CRUD en una amplia gama de recursos como Facturas, Contactos, Items, Notas de Crédito, Órdenes de Compra y muchos más.", {
-    endpoint: z.enum([
-        'invoices',
-        'contacts',
-        'items',
-        'credit-notes',
-        'remissions',
-        'purchase-orders',
-        'estimates',
-        'income-debit-notes',
-        'global-invoices',
-        'transportation-receipts',
-        'recurring-invoices',
-        'payments',
-        'bills',
-        'debit-notes',
-        'recurring-payments',
-        'warehouses',
-        'warehouse-transfers',
-        'inventory-adjustments',
-        'price-lists',
-        'custom-fields',
-        'variant-attributes',
-        'item-categories',
-        'sellers',
-        'categories',
-        'cost-centers',
-        'journals',
-        'bank-accounts',
-        'reconciliations',
-        'taxes',
-        'retentions',
-        'currencies',
-        'terms',
-        'company',
-        'users',
-        'number-templates',
-        'webhooks-subscriptions',
-        'additional-charges'
-    ]).describe("El tipo de recurso de la API de Alegra a consultar o modificar. Ej: 'invoices', 'contacts', 'items', 'credit-notes', 'purchase-orders', etc."),
-    method: z.enum(['get', 'post', 'put', 'patch', 'delete']).default('get').describe("El método HTTP a utilizar (get, post, put, patch, delete)."),
-    id: z.string().optional().describe("El ID específico de un recurso (ej: el ID de una factura para get, put, patch, delete)."),
-    queryParams: z.record(z.union([z.string(), z.any()])).optional().describe("Parámetros de consulta adicionales (ej: 'start', 'limit', 'query' para GET) o cuerpo de la solicitud para POST/PUT/PATCH.")
-}, async ({ endpoint, method, id, queryParams }) => {
-    let url = `${BASE_URL}${endpoint}`;
-    const upperMethod = method.toUpperCase();
-    if (id) {
-        url += `/${id}`;
-    }
-    const fetchOptions = {
-        method: upperMethod,
-        headers: getAlegraAuthHeaders()
+const writeInputSchema = z.object({
+    endpoint: endpointSchema,
+    method: z.enum(['post', 'put', 'patch'])
+        .describe('POST crea; PUT reemplaza; PATCH actualiza parcialmente.'),
+    id: idSchema,
+    queryParams: queryParamsSchema,
+});
+const deleteInputSchema = z.object({
+    endpoint: endpointSchema,
+    id: z.string().min(1).describe('Identificador del registro que se eliminará.'),
+    queryParams: queryParamsSchema,
+});
+const legacyInputSchema = z.object({
+    endpoint: endpointSchema,
+    method: z.enum(['get', 'post', 'put', 'patch', 'delete']).default('get'),
+    id: idSchema,
+    queryParams: queryParamsSchema,
+});
+function toolError(error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('Falló la solicitud a Alegra', {
+        error: error instanceof Error ? error.name : 'UnknownError',
+    });
+    return {
+        content: [{ type: 'text', text: `Error: ${message}` }],
+        isError: true,
     };
-    if (upperMethod === 'GET' || upperMethod === 'DELETE') {
-        if (queryParams && Object.keys(queryParams).length > 0) {
-            const params = new URLSearchParams(queryParams);
-            url += `?${params.toString()}`;
-        }
-    }
-    else {
-        fetchOptions.body = JSON.stringify(queryParams ?? {});
-    }
-    logger.info(`Realizando petición: ${upperMethod} ${url}`);
-    if (fetchOptions.body) {
-        logger.info(`Con cuerpo: ${fetchOptions.body}`);
-    }
-    try {
-        const response = await fetch(url, fetchOptions);
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(`Error de la API de Alegra: ${response.status} ${response.statusText} - ${errorBody}`);
-        }
-        const data = await response.json();
-        logger.info(`Respuesta exitosa: ${upperMethod} ${url} → ${response.status}`);
-        return {
-            content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-        };
-    }
-    catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        logger.error("Error al llamar a la API de Alegra:", error instanceof Error ? error : new Error(message));
-        return {
-            content: [{ type: "text", text: `Error: ${message}` }],
-            isError: true
-        };
-    }
-});
-async function main() {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    logger.info("Servidor MCP de Alegra conectado y esperando peticiones.");
 }
-main().catch((error) => {
-    console.error("Error fatal en el servidor:", error);
-    process.exit(1);
+function createServer() {
+    const server = new McpServer({ name: 'Alegra-MCP', version: '2.0.0' }, { maxToolInputElements: 10_000 });
+    server.registerPrompt('ultimas-facturas', {
+        title: 'Listar las 5 facturas de venta más recientes',
+        description: 'Solicita las últimas 5 facturas emitidas.',
+    }, () => ({
+        messages: [{
+                role: 'user',
+                content: { type: 'text', text: 'Muéstrame las últimas 5 facturas de venta.' },
+            }],
+    }));
+    server.registerPrompt('buscar-contacto', {
+        title: 'Buscar un contacto por su nombre',
+        description: 'Busca un cliente específico por nombre.',
+    }, () => ({
+        messages: [{
+                role: 'user',
+                content: { type: 'text', text: 'Encuentra el contacto con el nombre "Cliente Ejemplo S.A.S".' },
+            }],
+    }));
+    server.registerPrompt('detalle-item', {
+        title: 'Obtener detalles de un ítem por su ID',
+        description: 'Recupera un producto o servicio por su identificador.',
+    }, () => ({
+        messages: [{
+                role: 'user',
+                content: { type: 'text', text: 'Obtén los detalles del ítem con ID 15.' },
+            }],
+    }));
+    server.registerPrompt('borrador-factura', {
+        title: 'Crear un borrador de factura de venta',
+        description: 'Prepara un borrador con el cliente y el ítem indicados.',
+    }, () => ({
+        messages: [{
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text: 'Crea un borrador de factura para el cliente con ID 1, con el ítem de ID 4 (cantidad 2, precio 50000).',
+                },
+            }],
+    }));
+    server.registerPrompt('cuentas-bancarias', {
+        title: 'Listar las cuentas bancarias',
+        description: 'Consulta las cuentas bancarias registradas.',
+    }, () => ({
+        messages: [{
+                role: 'user',
+                content: { type: 'text', text: 'Lista todas las cuentas bancarias registradas.' },
+            }],
+    }));
+    server.registerTool('alegra_read', {
+        title: 'Consultar Alegra',
+        description: 'Consulta una colección o un registro de Alegra sin modificar datos.',
+        inputSchema: readInputSchema,
+        annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+        },
+    }, async ({ endpoint, id, queryParams }) => {
+        try {
+            const text = await requestAlegra({ endpoint, method: 'get', id, queryParams });
+            return { content: [{ type: 'text', text }] };
+        }
+        catch (error) {
+            return toolError(error);
+        }
+    });
+    server.registerTool('alegra_write', {
+        title: 'Crear o actualizar en Alegra',
+        description: 'Crea o modifica un registro de Alegra mediante POST, PUT o PATCH.',
+        inputSchema: writeInputSchema,
+        annotations: {
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: true,
+        },
+    }, async ({ endpoint, method, id, queryParams }) => {
+        try {
+            const text = await requestAlegra({ endpoint, method, id, queryParams });
+            return { content: [{ type: 'text', text }] };
+        }
+        catch (error) {
+            return toolError(error);
+        }
+    });
+    server.registerTool('alegra_delete', {
+        title: 'Eliminar un registro de Alegra',
+        description: 'Elimina un registro específico. Requiere el ID del registro.',
+        inputSchema: deleteInputSchema,
+        annotations: {
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: false,
+            openWorldHint: true,
+        },
+    }, async ({ endpoint, id, queryParams }) => {
+        try {
+            const text = await requestAlegra({ endpoint, method: 'delete', id, queryParams });
+            return { content: [{ type: 'text', text }] };
+        }
+        catch (error) {
+            return toolError(error);
+        }
+    });
+    server.registerTool('AlegraAPI', {
+        title: 'Alegra API (compatibilidad heredada)',
+        description: 'Herramienta heredada. Para nuevas integraciones usa alegra_read, alegra_write o alegra_delete.',
+        inputSchema: legacyInputSchema,
+        annotations: {
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: false,
+            openWorldHint: true,
+        },
+    }, async ({ endpoint, method, id, queryParams }) => {
+        try {
+            const text = await requestAlegra({
+                endpoint,
+                method,
+                id,
+                queryParams,
+            });
+            return { content: [{ type: 'text', text }] };
+        }
+        catch (error) {
+            return toolError(error);
+        }
+    });
+    return server;
+}
+logger.info('Iniciando servidor MCP para Alegra');
+const handle = serveStdio(createServer, { legacy: 'reject' });
+process.on('SIGINT', () => {
+    void handle.close();
+});
+process.on('SIGTERM', () => {
+    void handle.close();
 });
